@@ -5,6 +5,8 @@ import json
 import pymysql
 import re
 import logging
+import Downloader
+import random
 
 from multiprocessing.dummy import Pool as ThreadPool
 
@@ -27,7 +29,7 @@ def get_url(number_subzone=1):
 #        for i in range(1, 1649):
 #            urls.append(url + str(i) + '&ps=50')
     url = 'http://api.bilibili.com/x/web-interface/newlist?rid=95&pn='
-    for i in range(1, 7):#4786actually679*7
+    for i in range(1, 3700):#4786actually679*7
         urls.append(url + str(i) + '&ps=50')
     return urls
 
@@ -66,9 +68,9 @@ def get_price(title):
     match_price = re.search(u'(\d*)元',title)
     match_price_alt = re.search(u'(\d*)块',title)
     if match_price:
-        return int(str2int( match_price.groups()[0]))
+        return round(float(str2int(match_price.groups()[0])))
     elif match_price_alt:
-        return int(str2int( match_price_alt.groups()[0]))
+        return round(float(str2int(match_price_alt.groups()[0])))
     else:
         return -1
         
@@ -80,6 +82,8 @@ def get_time_str(pubdate):
     cur_time = time.localtime(pubdate)
     if cur_time[1] < 10:
         month = '0'+str(cur_time[1])
+    else:
+        month = str(cur_time[1])
 #    if cur_time[2] < 10:
 #        day = '0'+str(cur_time[2])        
     str_time = str(cur_time[0])+month
@@ -102,11 +106,17 @@ video_info_list=[]
 up_info_list=[]
 set_up=set([])
 flag = True
+u_c_request = Downloader.Downloader()
+
+
+
 def get_message(url):
-    logging.info(url[-7])
-    time.sleep(5)# without multiprocess
+#    logging.info(url[-7])
+    time.sleep(random.uniform(1,3))# without multiprocess
     try:
-        r = requests.get(url, timeout=5)
+        r = u_c_request.get(url, timeout=5)
+#        r = requests.get(url, timeout=5)
+
         if r.status_code == 200:
             data = json.loads(r.text)['data']['archives']
             for j in range(len(data)):
@@ -115,7 +125,7 @@ def get_message(url):
                     av = data[j]['aid']
                     time.sleep(0.1)
                     url_tag = 'https://api.bilibili.com/x/tag/archive/tags?aid='+str(av)
-                    tag_data = requests.get(url_tag,timeout=5).json()['data']
+                    tag_data = u_c_request.get(url_tag,timeout=5).json()['data']
                     set_kw = set( i['tag_name'].lower() for i in tag_data )
 
                     if new_check(set_kw):
@@ -138,10 +148,12 @@ def get_message(url):
                             cont['up_id'] = up_id
                             url_up = 'https://api.bilibili.com/x/web-interface/card?mid='+str(up_id)
                             time.sleep(0.1)
-                            up_data = requests.get(url_up,timeout=5).json()['data']
+                            up_data = u_c_request.get(url_up,timeout=5).json()['data']
                             cont['up_fans'] = up_data['follower']
                             cont['up_videos'] = up_data['archive_count']
                             up_info_list.append(cont)
+#                            logging.info(" data_amount:%i" % (len(video_info_list)))
+#                            print ("data_amount:%i" % (len(video_info_list)))
                 else:
                     global flag 
                     flag = False
@@ -155,23 +167,47 @@ def get_message(url):
 #CREATE TABLE jianlaji(id varchar(10), av_id varchar(50), pubdate varchar(50), title varchar(256), view varchar(50));
 
 
-from multiprocessing import Pool
+import threading 
+class MyThread(threading.Thread):
+    def __init__(self,arg):
+        super(MyThread,self).__init__()
+        self.arg = arg
+    
+    def run(self):
+        get_message(urls[self.arg])
+        
+import json
 
 if __name__ == '__main__':
-    conn = pymysql.connect(host='127.0.0.1',port=3306,user='root',password='qw13906294204',db='amount_jianlaji_digital',charset='utf8')
-    cur = conn.cursor()
     urls=get_url()
 #    pool = ThreadPool(6)
 #    pool.map(get_message,urls) 
 #    pool.close()
+#    pool.join()
     for i in range(len(urls)):
         if flag:
             start=time.time()
             get_message(urls[i])
-            logging.info("time:%d , data_amount:%i" % ((time.time()-start),len(video_info_list)))
-            print ("time:%d , data_amount:%i" % ((time.time()-start),len(video_info_list)))
+#            t=MyThread(i)
+#            t.start()
+#            t.join()
+            total_time = time.time()-start
+            if total_time < 26:
+                get_message(urls[i])
+            logging.info("page: %i , time:%d , data_amount:%i" % (i, (total_time),len(video_info_list)))
+            print ("page: %i , time:%d , data_amount:%i" % (i, (total_time),len(video_info_list)))
         else:
             break
+    jsobj = json.dumps(video_info_list)
+    fileobj = open('video.json','w')
+    fileobj.write(jsobj)
+    fileobj.close()
+    jsobj = json.dumps(up_info_list)
+    fileobj = open('up.json','w')
+    fileobj.write(jsobj)
+    fileobj.close()
+    conn = pymysql.connect(host='127.0.0.1',port=3306,user='root',password='qw13906294204',db='amount_jianlaji_digital',charset='utf8')
+    cur = conn.cursor()
     into_db_video(video_info_list,cur,conn)
     into_db_up(up_info_list,cur,conn)
     conn.close()
